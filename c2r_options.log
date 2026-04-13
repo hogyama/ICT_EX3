@@ -1,0 +1,20 @@
+RTL_USE_MEMORY_INIT_FILE_MACRO  1
+
+//PrintTreeHeightReduction 2
+
+//DBG_NodeAddr 2
+//PrintConstPropagation 2
+
+BEGIN_NO_RESET_REG
+_(*this).rf.xreg
+END_NO_RESET_REG
+
+BEGIN_INIT_REG
+_(*this).pc 
+END_INIT_REG
+
+
+BEGIN_IGNORE_SYSTEM_IO
+G_axi_*
+END_IGNORE_SYSTEM_IO
+
