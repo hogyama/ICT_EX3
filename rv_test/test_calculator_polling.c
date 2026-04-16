@@ -6,11 +6,10 @@
     #define _io_getch getchar
 #endif
 #define MAX_7SEG_SIZE 8
-#define PUTCH_MODE
 typedef enum State{
     STATE_INPUT= 0,         // 数字入力待ち
     STATE_OPERATOR_ENTERED, // 演算子が直前に入力された状態
-    STATE_RESULT_DISPLAYED, // =が押され、結果が表示された状態
+    STATE_RESULT_DISPLAYED, // = が押され、結果が表示された状態
     STATE_ERROR             // エラー状態。クリアされるまでこの状態を維持する
 }State_t;
 typedef struct Calculator_Status{
@@ -20,17 +19,15 @@ typedef struct Calculator_Status{
     bool is_first_entered; // 最初の入力が行われたかどうか
     State_t state;
 }status_t;
-static status_t calc_status = {0, 0, 0, false, STATE_INPUT};
-// とりあえず
-// 数字と演算子と=以外はエラーを表示する
+// 有効なキーが入力されるまで待つ
 char get_valid_key();
 // 計算を進める
 void process_calc(char key);
 // ディスプレイを更新
 void update_display();
-// 桁数計算
+// 数値を7セグメント表示用のコードに変換
 int calc_digit(int num, int* array);
-
+status_t calc_status = {0, 0, 0, false, STATE_INPUT};
 int main(){
     start_profiler();
     update_display();
@@ -48,9 +45,6 @@ char get_valid_key(void){
         // クリアはCかc
         if((key >= '0' && key <= '9') || key == '+' || key == '-' || key == '*' || key == '/' || key == '%' || key == '=')
         {
-            #if defined(PUTCH_MODE)
-                _io_putch(key);
-            #endif
             return key;
         }else if(key == 'C' || key == 'c'){
             _io_putch('\r');
@@ -136,23 +130,13 @@ void process_calc(char key){
         case STATE_ERROR:
             if(key == 'c' || key == 'C')
             {
-                calc_status = (status_t){0, 0, 0, false, STATE_INPUT};
+               calc_status = (status_t){0, 0, 0, false, STATE_INPUT};
             }
             break;
     }
 }
-void update_display(){
 #if !defined(NATIVE_MODE)
-    // --- パソコン（WSL）でテスト実行した時の仮の表示 ---
-    if(calc_status.state == STATE_ERROR){
-        printf("\r\n[7SEG DISPLAY: ERROR ]\r\n");
-    } else {
-        int display_value;
-        if(calc_status.state == STATE_INPUT) display_value = calc_status.current_value;
-        else display_value = calc_status.saved_value;
-        
-        printf("\r\n[7SEG DISPLAY: %d ]\r\n", display_value);
-    }
+void update_display(){
     if(calc_status.state == STATE_ERROR){
         gpio->dout7SEG[1] = (
             S7_e
@@ -193,11 +177,24 @@ void update_display(){
             );
         }
     }
-#endif
 }
+#else
+void update_display(){
+    if(calc_status.state == STATE_ERROR){
+        printf("\r\n[7SEG DISPLAY: ERROR ]\r\n");
+    } else {
+        int display_value;
+        if(calc_status.state == STATE_INPUT) display_value = calc_status.current_value;
+        else display_value = calc_status.saved_value;
+        
+        printf("\r\n[7SEG DISPLAY: %d ]\r\n", display_value);
+    }
+}
+#endif
+
+#if !defined(NATIVE_MODE)
 int calc_digit(int num, int* array){
     int digit = 0;
-#if !defined(NATIVE_MODE)
     if (num < 0) {
         num = -num;
     }
@@ -238,10 +235,9 @@ int calc_digit(int num, int* array){
                 array[digit] = S7_9;
                 break;
         }
-        //array[digit] = num % 10; 
         num = num / 10;         
         digit++;                 
     }
     return digit; 
-#endif
 }
+#endif
