@@ -1,4 +1,4 @@
-SRC = test_ex2
+SRC = test_calcuclator_polling
 #SRC = t4b
 SRC_C = $(SRC).c
 
