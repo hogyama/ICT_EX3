@@ -1,6 +1,7 @@
 #include "io.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 #define MAX_VALUE 9999999 // 表示できる最大値。8桁目は符号に用いる
 #define OVERFLOW_VALUE (MAX_VALUE + 1) 
 #define DIV_ACCURACY 7 
@@ -15,8 +16,7 @@ typedef struct number{
     int dp; // 小数点以下の桁数 1.2ならdpは1 
 }num_t;
 typedef enum state{
-    Q_START = 0,
-    Q_N,
+    Q_N = 0,
     Q_ZERO,
     Q_DEC,
     Q_OP,
@@ -37,6 +37,11 @@ typedef struct key_flag{
     bool is_op;
     bool is_equal;
     bool is_clear;
+    bool is_backspace;
+    bool is_memory_add;
+    bool is_memory_sub;
+    bool is_memory_clear;
+    bool is_memory_recall;
 }key_flag_t;
 typedef enum Seg7_Pattern seg7_t;
 // prototype
@@ -46,29 +51,42 @@ void update_process_status(char key, key_flag_t* key_flag, process_status_t* pro
 void calc_result(process_status_t* process_status);
 void update_display(process_status_t* process_status);
 // process_statusの状態遷移
-void process_start(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_n(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_zero(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_dec(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_op(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_re(char key, key_flag_t *key_flag, process_status_t* process_status);
 void process_er(char key, key_flag_t *key_flag, process_status_t* process_status);
-// display
+// print
+void print_setup();
 void print_error(void);
 void print_overflow(void);
+// display
 void display_error(void);
 void display_overflow(void);
 void display_num(int value, int dp, state_t prev_state);
+// memory
+void memory_clear(); // MC
+num_t memory_recall();
+bool memory_add(num_t a); // M+
+bool memory_subtract(num_t a); // M-
 // helper function
-int max(int a, int b);
-int count_digits(int value);
-int conv_to_7seg(int num);
+static int max(int a, int b);
+static int count_digits(int value);
+static int conv_to_7seg(int num);
+// inline
+static inline void clear_process(process_status_t* process_status){
+    *process_status = (process_status_t){Q_OP, Q_OP, {0, 0}, {0, 0}, '+'};
+}
+// global variable
+static num_t memory;
 int main(){
     start_profiler();
     process_status_t process_status;
     key_flag_t key_flag = {false, false, false, false, false, false};
-    // 初期状態は内部的に0+が入力されているとみなす
-    process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+    // 初期状態は n1 ,operator は未定義にせず、0, '+' をダミーとして保持する
+    process_status = (process_status_t){Q_OP, Q_OP, {0, 0}, {0, 0}, '+'};
+    print_setup();
     while(1){
         char key = get_valid_key();
         if(key == EOF) break;
@@ -83,10 +101,14 @@ char get_valid_key(void){
     char key;
     while(1){
         key = _io_getch();
-        if((key >= '0' && key <= '9') || key == '+' || key == '-' || key == '*' || key == '/' || key == '%' || key == '=' || key == '.' || key == 'C' || key == 'c'){
+        if((key >= '0' && key <= '9') || key == '+' || key == '-' || key == '*' || key == '/' || key == '%' || key == '=' || key == '.' || key == 'C' || key == 'c' || key == (char)0x08 ){
+            return key;
+        }else if(key == 'P' || key == 'N' || key == 'R' || key == 'D'){
+            return key;
+        }else if(key == 'p' || key == 'n' || key == 'r' || key == 'd'){
             return key;
         }
-    }
+    } 
 }
 // 入力されたキーに応じてkey_flagを更新する関数
 void update_frag(char key, key_flag_t* key_flag){
@@ -96,15 +118,17 @@ void update_frag(char key, key_flag_t* key_flag){
     key_flag->is_op = (key == '+' || key == '-' || key == '*' || key == '/' || key == '%');
     key_flag->is_equal = (key == '=');
     key_flag->is_clear = (key == 'C' || key == 'c');
+    key_flag->is_backspace = (key == 0x08);
+    key_flag->is_memory_add = (key == 'P' || key == 'p');
+    key_flag->is_memory_sub = (key == 'N' || key == 'n');
+    key_flag->is_memory_clear = (key == 'D' || key == 'd');
+    key_flag->is_memory_recall = (key == 'R' || key == 'r');
     return;
 }
 // 現在の状態と入力されたキーに応じて状態遷移を行う関数
 void update_process_status(char key, key_flag_t* key_flag, process_status_t* process_status){
     process_status->prev_state = process_status->current_state;
     switch(process_status->current_state){
-        case Q_START:
-            process_start(key, key_flag, process_status);
-            break;
         case Q_N:
             process_n(key, key_flag, process_status);
             break;
@@ -125,34 +149,31 @@ void update_process_status(char key, key_flag_t* key_flag, process_status_t* pro
             break;
     }
 }
-// Q_REのとき計算を行う関数
+// 計算を行う関数
 void calc_result(process_status_t* process_status){
     long long a = process_status->n1.value;
     long long b = process_status->n2.value;
     int dp_a = process_status->n1.dp;
     int dp_b = process_status->n2.dp;
-    int max_dp = max(process_status->n1.dp, process_status->n2.dp);
     long long result_value;
     int result_dp;
-    while(dp_a < max_dp){
-        a *= 10;
-        dp_a++;
-    }
-    while(dp_b < max_dp){
-        b *= 10;
-        dp_b++;
-    }
+    int max_dp = max(process_status->n1.dp, process_status->n2.dp);    
     switch(process_status->operator){
         case '+':
-            result_value = (long long)a + (long long)b;
-            result_dp = max_dp;
-            break;
         case '-':
-            result_value = (long long)a - (long long)b;
+            while(dp_a < max_dp){
+                a *= 10;
+                dp_a++;
+            }
+            while(dp_b < max_dp){
+                b *= 10;
+                dp_b++;
+            }
+            result_value = (process_status->operator == '+') ? (a + b) : (a - b);
             result_dp = max_dp;
             break;
         case '*':
-            result_value = (long long)a * (long long)b;
+            result_value = a * b;
             result_dp = dp_a + dp_b; 
             break;
         case '/':
@@ -160,7 +181,7 @@ void calc_result(process_status_t* process_status){
                 process_status->current_state = Q_ER;
                 return;
             }
-            result_value = ((long long)a * SCALE / (long long)b);
+            result_value = a * SCALE / b;
             result_dp = dp_a - dp_b + DIV_ACCURACY;     
             break;
         case '%':
@@ -194,6 +215,7 @@ void calc_result(process_status_t* process_status){
     }
     process_status->n1.value = (int)result_value;
     process_status->n1.dp = result_dp;
+    process_status->n2 = (num_t){0,0};
 }
 // 状態に応じて表示を更新する関数
 void update_display(process_status_t* process_status){
@@ -213,34 +235,11 @@ void update_display(process_status_t* process_status){
         display_num(process_status->n1.value, process_status->n1.dp, process_status->prev_state); // 演算子を表示するため、小数点以下の桁数を1増やす
     }else if(process_status->current_state == Q_N || process_status->current_state == Q_ZERO || process_status->current_state == Q_DEC){
         display_num(process_status->n2.value, process_status->n2.dp, process_status->prev_state);
-    }else if(process_status->current_state == Q_START){
-        display_num(0, 0, Q_START);
     }
 }
 // ==== 状態遷移の関数 ====
-void process_start(char key, key_flag_t *key_flag, process_status_t* process_status){
-    if(key_flag->is_period || key_flag->is_equal){
-        process_status->current_state = Q_ER;
-    }
-    if(key_flag->is_op){ // ーは負の数の入力とみなす
-        process_status->operator = key;
-        process_status->current_state = Q_OP;
-    }
-    if(key_flag->is_zero){
-        process_status->n2.value = 0;
-        process_status->current_state = Q_ZERO;
-    }
-    if(key_flag->is_n){
-        process_status->n2.value = key - '0';
-        process_status->current_state = Q_N;
-    }
-    if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
-    }
-    return;
-}
 void process_n(char key, key_flag_t *key_flag, process_status_t* process_status){
-    if(key_flag->is_n){
+    if(key_flag->is_n || key_flag -> is_zero){
         process_status->n2.value = process_status->n2.value * 10 + (key - '0');
         if(process_status->n2.value > MAX_VALUE){
             process_status->current_state = Q_ER;
@@ -250,8 +249,7 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
         process_status->current_state = Q_DEC;
     }
     if(key_flag->is_op){
-        process_status->n1 = process_status->n2; // n1にn2の値をコピー
-        process_status->n2 = (num_t){0, 0}; // n2を初期化
+        calc_result(process_status); // n1にn1 op n2を格納
         process_status->operator = key;
         process_status->current_state = Q_OP;
     }
@@ -260,7 +258,31 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
         process_status->current_state = Q_RE;
     }
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
+    }
+    if(key_flag->is_backspace){
+        if(process_status->n2.value < 9){
+            process_status->current_state = Q_OP;
+            process_status->n2 = (num_t){0,0};
+        }else{        
+            process_status->n2.value = process_status->n2.value / 10;  
+        }
+    }
+    if(key_flag->is_memory_add){
+        if(!memory_add(process_status->n2)){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_sub){
+        if(!(memory_subtract(process_status->n2))){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_clear){
+        memory_clear();
+    }
+    if(key_flag->is_memory_recall){
+        process_status->n2 = memory_recall();
     }
     return;
 }
@@ -269,8 +291,7 @@ void process_zero(char key, key_flag_t *key_flag, process_status_t* process_stat
         process_status->current_state = Q_DEC;
     }
     if(key_flag->is_op){
-        process_status->n1 = process_status->n2; // n1にn2の値をコピー
-        process_status->n2 = (num_t){0, 0}; // n2を初期化
+        calc_result(process_status); // n1にn1 op n2を格納
         process_status->operator = key;
         process_status->current_state = Q_OP;
     }
@@ -287,7 +308,27 @@ void process_zero(char key, key_flag_t *key_flag, process_status_t* process_stat
         process_status->current_state = Q_ZERO;
     }
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
+    }
+    if(key_flag->is_backspace){
+        process_status->current_state = Q_OP;
+        process_status->n2 = (num_t){0,0};
+    }
+    if(key_flag->is_memory_add){
+        if(!memory_add(process_status->n2)){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_sub){
+        if(!(memory_subtract(process_status->n2))){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_clear){
+        memory_clear();
+    }
+    if(key_flag->is_memory_recall){
+        process_status->n2 = memory_recall();
     }
     return;
 }
@@ -303,11 +344,12 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
         process_status->n2.dp++;
         if(process_status->n2.dp > MAX_7SEG_SIZE - 1){
             process_status->current_state = Q_ER;
+        }else{
+            process_status->current_state = Q_DEC;
         }
-        process_status->current_state = Q_DEC;
     }
     if(key_flag->is_op){
-        process_status->n1 = process_status->n2; // n1にn2の値をコピー
+        calc_result(process_status); // n1にn1 op n2を格納
         process_status->operator = key;
         process_status->current_state = Q_OP;
     }
@@ -316,12 +358,36 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
         process_status->current_state = Q_RE;
     }
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
+    }
+    if(key_flag->is_backspace){
+        if(process_status->n2.dp > 0){
+            process_status->n2.value = process_status->n2.value / 10;  
+            process_status->n2.dp--; // 12.3をbackspaceなら12.
+        }else{
+            process_status->current_state = Q_N; // 12.をbackspaceなら12
+        }
+    }
+    if(key_flag->is_memory_add){
+        if(!memory_add(process_status->n2)){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_sub){
+        if(!(memory_subtract(process_status->n2))){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_clear){
+        memory_clear();
+    }
+    if(key_flag->is_memory_recall){
+        process_status->n2 = memory_recall();
     }
     return;
 }
 void process_op(char key, key_flag_t *key_flag, process_status_t* process_status){
-    if(key_flag->is_period || key_flag->is_equal || key_flag->is_op){
+    if(key_flag->is_period || key_flag->is_equal || key_flag->is_op || key_flag->is_memory_add || key_flag->is_memory_sub){
         process_status->current_state = Q_ER;
     }
     if(key_flag->is_n){
@@ -333,13 +399,31 @@ void process_op(char key, key_flag_t *key_flag, process_status_t* process_status
         process_status->current_state = Q_ZERO;
     }
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
     }
-     return;
+    if(key_flag->is_backspace){
+        num_t temp = process_status->n1;
+        state_t temp_state = process_status->prev_state;
+        // 演算子を削除して入力状態へ戻す
+        // operator は未定義にせず、初期状態と同様に '+' をダミーとして保持する
+        *process_status = (process_status_t){temp_state, Q_OP, {0,0}, temp, '+'}; 
+    }
+    if(key_flag->is_memory_clear){
+        memory_clear();
+    }
+    if(key_flag->is_memory_recall){
+        process_status->n2 = memory_recall();
+        if(process_status->n2.dp == 0){
+            process_status->current_state = Q_N;
+        }else if(process_status->n2.dp > 0){
+            process_status->current_state = Q_DEC;
+        }
+    }
+    return;
 }
 void process_er(char key, key_flag_t *key_flag, process_status_t* process_status){
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
     }else{
         process_status->current_state = Q_ER;
     }
@@ -362,11 +446,59 @@ void process_re(char key, key_flag_t *key_flag, process_status_t* process_status
         process_status->current_state = Q_RE;
     }
     if(key_flag->is_clear){
-        *process_status = (process_status_t){Q_START, Q_START, {0, 0}, {0, 0}, '+'};
+        clear_process(process_status);
+    }
+    if(key_flag->is_backspace){
+        process_status->current_state = Q_ER;
     }   
+    if(key_flag->is_memory_clear){
+        memory_clear();
+    }
+    if(key_flag->is_memory_add){
+        
+    }
+    if(key_flag->is_memory_add){
+
+    }
+    if(key_flag->is_memory_recall){
+        num_t temp = memory_recall();
+        if(temp.dp == 0){
+            if(temp.value = 0){
+                *process_status = (process_status_t){Q_ZERO, Q_RE, {0, 0}, temp, '+'};
+            }else{
+                *process_status = (process_status_t){Q_N, Q_RE, {0, 0}, temp, '+'};
+            }
+        }else{
+            *process_status = (process_status_t){Q_DEC, Q_RE, {0, 0}, temp, '+'};
+        }
+    }
     return;    
 }
-// ==== displayの関数 ====
+// ==== printの関数 ====
+void print_setup(){
+    char setup_msg[] =
+        "Calculator functions:\n"
+        "  [0-9] : 数字入力\n"
+        "  [.]   : 小数点入力\n"
+        "  [+]   : 加算\n"
+        "  [-]   : 減算\n"
+        "  [*]   : 乗算\n"
+        "  [/]   : 除算\n"
+        "  [%]   : 剰余(整数のみ)\n"
+        "  [=]   : 計算実行\n"
+        "  [BS]  : 1文字削除\n" 
+        "  [C]   : クリア\n"
+        "\n"
+        "注意:\n"
+        "  - 小数入力に対応しています。\n"
+        "  - 剰余演算は小数を扱いません。\n"
+        "  - 表示範囲を超えると OVERFLOW を表示します。\n"
+        "  - 不正な入力では ERROR になります。\n"
+        "入力例: 10+12-1.23*60/80=\n";
+    for(int i = 0; setup_msg[i] != '\0'; i++){
+        _io_putch(setup_msg[i]);
+    }
+}
 void print_error(){
     char error_msg[] = "Error: invalid input. Please enter C or c to clear.\n";
     for(int i = 0; error_msg[i] != '\0'; i++){
@@ -379,23 +511,29 @@ void print_overflow(void){
         _io_putch(overflow_msg[i]);
     }
 }
+// ==== displayの関数 ====
 void display_error(void){
+#if !defined(NATIVE_MODE)
     gpio->dout7SEG[1] = (
         S7_space << 24 | S7_space << 16 | S7_space << 8 | S7_e << 0
     );
     gpio->dout7SEG[0] = (
         S7_r << 24 | S7_r << 16 | S7_o << 8 | S7_r << 0
     );
+#endif
 }
 void display_overflow(void){
+#if !defined(NATIVE_MODE)
     gpio->dout7SEG[1] = (
         S7_o << 24 | S7_v << 16 | S7_e << 8 | S7_r << 0
     );
     gpio->dout7SEG[0] = (
         S7_f << 24 | S7_l << 16 | S7_o << 8 | S7_w << 0 
     );
+#endif
 }
 void display_num(int value, int dp, state_t prev_state){
+#if !defined(NATIVE_MODE)
     int num[MAX_7SEG_SIZE] = {S7_space, S7_space, S7_space, S7_space, S7_space, S7_space, S7_space, S7_space};
     int abs_value = (value >= 0) ? value : -value;
     bool is_positive = (value >= 0);
@@ -405,11 +543,15 @@ void display_num(int value, int dp, state_t prev_state){
         abs_value /= 10;
         if(abs_value == 0) break;
     }
+    while(dp > i){ 
+        i++; 
+        num[i] = S7_0;
+    } 
     if(!is_positive){
         num[7] = S7_minus; 
     }
     if(dp > 0){
-        num[dp - 1] |= S7_period;
+        num[dp] |= S7_period;
     }
     if(prev_state == Q_DEC && dp == 0){
         num[0] |= S7_period; // 小数点以下の桁数が0のときは、整数部の最後の数字に小数点をつける
@@ -426,6 +568,10 @@ void display_num(int value, int dp, state_t prev_state){
         num[1] << 8 |
         num[0] << 0
     );
+#else
+    // パソコンデバック
+    printf("value = %d, dp = %d\n", value,dp);
+#endif
 }
 // ==== helper function ====
 int max(int a, int b){
@@ -442,6 +588,7 @@ int count_digits(int value){
     return digits;
 }
 int conv_to_7seg(int num){
+#if !defined(NATIVE_MODE)
     switch(num){
         case 0: return S7_0;
         case 1: return S7_1;
@@ -455,4 +602,7 @@ int conv_to_7seg(int num){
         case 9: return S7_9;
         default: return S7_space;
     }
+#else
+    return 0;
+#endif
 }
