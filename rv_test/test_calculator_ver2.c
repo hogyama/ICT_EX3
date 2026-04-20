@@ -1,7 +1,6 @@
 #include "io.h"
 #include <stdio.h>
 #include <stdbool.h>
-#include <stdint.h>
 #define MAX_VALUE 9999999 // 表示できる最大値。8桁目は符号に用いる
 #define OVERFLOW_VALUE (MAX_VALUE + 1) 
 #define DIV_ACCURACY 7 
@@ -55,7 +54,7 @@ typedef struct memory{
 typedef enum Seg7_Pattern seg7_t;
 // prototype
 char get_valid_key(void);
-void update_frag(char key, key_flag_t* key_flag);
+void update_flag(char key, key_flag_t* key_flag);
 void update_process_status(char key, key_flag_t* key_flag, process_status_t* process_status);
 void calc_result(process_status_t* process_status);
 void update_display(process_status_t* process_status);
@@ -99,7 +98,7 @@ int main(){
     while(1){
         char key = get_valid_key();
         if(key == EOF) break;
-        update_frag(key, &key_flag);
+        update_flag(key, &key_flag);
         update_process_status(key, &key_flag, &process_status);
         update_display(&process_status);
     }
@@ -120,7 +119,7 @@ char get_valid_key(void){
     } 
 }
 // 入力されたキーに応じてkey_flagを更新する関数
-void update_frag(char key, key_flag_t* key_flag){
+void update_flag(char key, key_flag_t* key_flag){
     key_flag->is_period = (key == '.');
     key_flag->is_zero = (key == '0');
     key_flag->is_n = (key >= '1' && key <= '9');
@@ -207,17 +206,28 @@ void calc_result(process_status_t* process_status){
             break;
     }
     // 結果を表示可能な形式に変換する
-    while(result_dp < 0){
-        result_value /= 10;
+    // 小数点以下の桁数が足りない場合   
+    while(result_dp < 0){ // result_valueを10倍し、小数点を右に動かすことを繰り返す
+        result_value *= 10;
         result_dp++;
     }
-    if(result_dp > 0){
-        while(count_digits(result_value) > MAX_7SEG_SIZE - 1){
-            result_value /= 10;
-            result_dp--;
-        }
+    // 小数点以下の桁数が多すぎる場合 
+    while(result_dp > MAX_7SEG_SIZE - 1){ // result_valueを10で割って切り捨て、小数点を左に動かすことを繰り返す
+        result_value /= 10;
+        result_dp--; 
     }
-    if(result_value > MAX_VALUE || result_value < -MAX_VALUE){
+    // 答えが小数で表示可能な範囲を超える場合は切り捨て
+    while(result_dp > 0 && (result_value > MAX_VALUE || result_value < -MAX_VALUE)){ 
+        result_value /= 10;
+        result_dp--;
+    }
+    // 小数点以下の末尾の0を削除
+    while(result_dp > 0 && result_value % 10 == 0){ // 小数点以下の末尾の0を削除
+        result_value /= 10;
+        result_dp--;
+    }
+    // 答えが整数で表示可能な範囲を超える場合はエラー
+    if(result_dp == 0 && (result_value > MAX_VALUE || result_value < -MAX_VALUE)){
         result_value = MAX_VALUE + 1; // オーバーフローを示す特別な値
         process_status->current_state = Q_ER;
         return;
