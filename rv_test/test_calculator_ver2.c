@@ -43,6 +43,15 @@ typedef struct key_flag{
     bool is_memory_clear;
     bool is_memory_recall;
 }key_flag_t;
+typedef enum Memory_State{
+    M_N = 0,
+    M_ZERO,
+    M_DEC
+}memory_state_t;
+typedef struct memory{
+    num_t n;
+    memory_state_t last_changed_state;
+}memory_t;
 typedef enum Seg7_Pattern seg7_t;
 // prototype
 char get_valid_key(void);
@@ -67,7 +76,7 @@ void display_overflow(void);
 void display_num(int value, int dp, state_t prev_state);
 // memory
 void memory_clear(); // MC
-num_t memory_recall();
+memory_t memory_recall(); // MR
 bool memory_add(num_t a); // M+
 bool memory_subtract(num_t a); // M-
 // helper function
@@ -79,7 +88,7 @@ static inline void clear_process(process_status_t* process_status){
     *process_status = (process_status_t){Q_OP, Q_OP, {0, 0}, {0, 0}, '+'};
 }
 // global variable
-static num_t memory;
+static memory_t memory = {{0,0}, Q_ZERO}; 
 int main(){
     start_profiler();
     process_status_t process_status;
@@ -268,6 +277,7 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
             process_status->n2.value = process_status->n2.value / 10;  
         }
     }
+    // メモリに加減算、リコールする際はn2を使う
     if(key_flag->is_memory_add){
         if(!memory_add(process_status->n2)){
             memory_clear();
@@ -278,11 +288,14 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
             memory_clear();
         }
     }
+    if(key_flag->is_memory_recall){
+        memory_t mem = memory_recall();
+        process_status->n2 = mem.n;
+        process_status->current_state = (state_t)mem.last_changed_state;
+    }
+    // メモリクリアは常に有効
     if(key_flag->is_memory_clear){
         memory_clear();
-    }
-    if(key_flag->is_memory_recall){
-        process_status->n2 = memory_recall();
     }
     return;
 }
@@ -314,7 +327,9 @@ void process_zero(char key, key_flag_t *key_flag, process_status_t* process_stat
         process_status->current_state = Q_OP;
         process_status->n2 = (num_t){0,0};
     }
+    // メモリに加減算、リコールする際はn2を使う
     if(key_flag->is_memory_add){
+
         if(!memory_add(process_status->n2)){
             memory_clear();
         }
@@ -324,12 +339,15 @@ void process_zero(char key, key_flag_t *key_flag, process_status_t* process_stat
             memory_clear();
         }
     }
+    if(key_flag->is_memory_recall){
+        memory_t mem = memory_recall();
+        process_status->n2 = mem.n;
+        process_status->current_state = (state_t)mem.last_changed_state; // memoryの状態に合わせてQ_N, Q_ZERO, Q_DECのいずれかに遷移
+    }
     if(key_flag->is_memory_clear){
         memory_clear();
     }
-    if(key_flag->is_memory_recall){
-        process_status->n2 = memory_recall();
-    }
+    
     return;
 }
 void process_dec(char key, key_flag_t *key_flag, process_status_t* process_status){
@@ -368,6 +386,7 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
             process_status->current_state = Q_N; // 12.をbackspaceなら12
         }
     }
+    // メモリに加減算、リコールする際はn2を使う
     if(key_flag->is_memory_add){
         if(!memory_add(process_status->n2)){
             memory_clear();
@@ -378,11 +397,13 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
             memory_clear();
         }
     }
+    if(key_flag->is_memory_recall){
+        memory_t mem = memory_recall();
+        process_status->n2 = mem.n;
+        process_status->current_state = (state_t)mem.last_changed_state;
+    }
     if(key_flag->is_memory_clear){
         memory_clear();
-    }
-    if(key_flag->is_memory_recall){
-        process_status->n2 = memory_recall();
     }
     return;
 }
@@ -408,16 +429,25 @@ void process_op(char key, key_flag_t *key_flag, process_status_t* process_status
         // operator は未定義にせず、初期状態と同様に '+' をダミーとして保持する
         *process_status = (process_status_t){temp_state, Q_OP, {0,0}, temp, '+'}; 
     }
+    // メモリに加減算する際はn1を使う
+    if(key_flag->is_memory_add){
+        if(!memory_add(process_status->n1)){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_sub){
+        if(!(memory_subtract(process_status->n1))){
+            memory_clear();
+        }
+    }
+    // リコールはn2に値をセットして状態遷移する
+    if(key_flag->is_memory_recall){
+        memory_t mem = memory_recall();
+        process_status->n2 = mem.n;
+        process_status->current_state = (state_t)mem.last_changed_state;
+    }
     if(key_flag->is_memory_clear){
         memory_clear();
-    }
-    if(key_flag->is_memory_recall){
-        process_status->n2 = memory_recall();
-        if(process_status->n2.dp == 0){
-            process_status->current_state = Q_N;
-        }else if(process_status->n2.dp > 0){
-            process_status->current_state = Q_DEC;
-        }
     }
     return;
 }
@@ -451,26 +481,27 @@ void process_re(char key, key_flag_t *key_flag, process_status_t* process_status
     if(key_flag->is_backspace){
         process_status->current_state = Q_ER;
     }   
+    // メモリに加減算する際はn1を使う
+    if(key_flag->is_memory_add){
+        if(!memory_add(process_status->n1)){
+            memory_clear();
+        }
+    }
+    if(key_flag->is_memory_sub){
+        if(!(memory_subtract(process_status->n1))){
+            memory_clear();
+        }
+    }
+    // 新規入力としてn2に値をセットして状態遷移する
+    if(key_flag->is_memory_recall){
+        process_status->n1 = (num_t){0,0}; 
+        process_status->operator = '+'; // ダミー
+        memory_t mem = memory_recall();
+        process_status->n2 = mem.n;
+        process_status->current_state = (state_t)mem.last_changed_state;
+    }
     if(key_flag->is_memory_clear){
         memory_clear();
-    }
-    if(key_flag->is_memory_add){
-        
-    }
-    if(key_flag->is_memory_add){
-
-    }
-    if(key_flag->is_memory_recall){
-        num_t temp = memory_recall();
-        if(temp.dp == 0){
-            if(temp.value = 0){
-                *process_status = (process_status_t){Q_ZERO, Q_RE, {0, 0}, temp, '+'};
-            }else{
-                *process_status = (process_status_t){Q_N, Q_RE, {0, 0}, temp, '+'};
-            }
-        }else{
-            *process_status = (process_status_t){Q_DEC, Q_RE, {0, 0}, temp, '+'};
-        }
     }
     return;    
 }
@@ -486,6 +517,10 @@ void print_setup(){
         "  [/]   : 除算\n"
         "  [%]   : 剰余(整数のみ)\n"
         "  [=]   : 計算実行\n"
+        "  [P]   : M+\n"
+        "  [N]   : M-\n"
+        "  [R]   : MR\n"
+        "  [D]   : MC\n"
         "  [BS]  : 1文字削除\n" 
         "  [C]   : クリア\n"
         "\n"
@@ -494,6 +529,9 @@ void print_setup(){
         "  - 剰余演算は小数を扱いません。\n"
         "  - 表示範囲を超えると OVERFLOW を表示します。\n"
         "  - 不正な入力では ERROR になります。\n"
+        "  - メモリに加算/減算する際は、現在の入力値や計算結果がメモリに加算/減算されます。\n"
+        "  - メモリリコールすると、メモリの値が現在の入力値としてセットされます。\n"
+        "  - メモリがオーバーフローした場合は、強制的にメモリがクリアされます。\n"
         "入力例: 10+12-1.23*60/80=\n";
     for(int i = 0; setup_msg[i] != '\0'; i++){
         _io_putch(setup_msg[i]);
@@ -572,6 +610,66 @@ void display_num(int value, int dp, state_t prev_state){
     // パソコンデバック
     printf("value = %d, dp = %d\n", value,dp);
 #endif
+}
+// ==== memoryの関数 ====
+bool memory_add(num_t a){
+    if(memory.n.dp != a.dp){
+        // dpを合わせる
+        while(memory.n.dp < a.dp){
+            memory.n.value *= 10;
+            memory.n.dp++;
+        }
+        while(memory.n.dp > a.dp){
+            a.value *= 10;
+            a.dp++;
+        }
+    }
+    memory.n.value += a.value;
+    memory.n.dp = (memory.last_changed_state == M_DEC) ? memory.n.dp : a.dp;
+    if(memory.n.value == 0 && memory.n.dp == 0){
+        memory.last_changed_state = M_ZERO;
+    }else if(memory.n.dp > 0){
+        memory.last_changed_state = M_DEC;
+    }else{
+        memory.last_changed_state = M_N;
+    }
+    if(memory.n.value > MAX_VALUE || memory.n.value < -MAX_VALUE){
+        return false; // オーバーフロー
+    }
+    return true;
+}
+bool memory_subtract(num_t a){
+    if(memory.n.dp != a.dp){
+        // dpを合わせる
+        while(memory.n.dp < a.dp){
+            memory.n.value *= 10;
+            memory.n.dp++;
+        }
+        while(memory.n.dp > a.dp){
+            a.value *= 10;
+            a.dp++;
+        }
+    }
+    memory.n.value -= a.value;
+    memory.n.dp = (memory.last_changed_state == M_DEC) ? memory.n.dp : a.dp;
+    if(memory.n.value == 0 && memory.n.dp == 0){
+        memory.last_changed_state = M_ZERO;
+    }else if(memory.n.dp > 0){
+        memory.last_changed_state = M_DEC;
+    }else{
+        memory.last_changed_state = M_N;
+    }
+    if(memory.n.value > MAX_VALUE || memory.n.value < -MAX_VALUE){
+        return false; // オーバーフロー
+    }
+    return true;
+}
+void memory_clear(){
+    memory.n = (num_t){0,0};
+    memory.last_changed_state = M_ZERO;
+}
+memory_t memory_recall(){
+    return memory;
 }
 // ==== helper function ====
 int max(int a, int b){
