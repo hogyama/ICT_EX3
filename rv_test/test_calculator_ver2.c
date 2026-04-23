@@ -228,7 +228,9 @@ void calc_result(process_status_t* process_status){
     }
     // 答えが整数で表示可能な範囲を超える場合はエラー
     if(result_dp == 0 && (result_value > MAX_VALUE || result_value < -MAX_VALUE)){
-        result_value = MAX_VALUE + 1; // オーバーフローを示す特別な値
+        process_status->n1.value = OVERFLOW_VALUE;
+        process_status->n1.dp = 0;
+        process_status->n2 = (num_t){0,0};
         process_status->current_state = Q_ER;
         return;
     }
@@ -269,12 +271,16 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
     }
     if(key_flag->is_op){
         calc_result(process_status); // n1にn1 op n2を格納
-        process_status->operator = key;
-        process_status->current_state = Q_OP;
+        if(process_status->current_state != Q_ER){
+            process_status->operator = key;
+            process_status->current_state = Q_OP;
+        }
     }
     if(key_flag->is_equal){
         calc_result(process_status);
-        process_status->current_state = Q_RE;
+        if(process_status->current_state != Q_ER){
+            process_status->current_state = Q_RE;
+        }
     }
     if(key_flag->is_clear){
         clear_process(process_status);
