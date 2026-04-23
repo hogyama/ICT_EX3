@@ -9,9 +9,7 @@ int main(){
     start_profiler();
     gpio->data = 0;
 #endif
-
     int terminated = 0;
-
     while(!terminated)
     {
         int i = 0;

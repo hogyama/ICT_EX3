@@ -90,7 +90,7 @@ static inline void clear_process(process_status_t* process_status){
 // global variable
 static memory_t memory = {{0,0}, M_ZERO}; 
 int main(){
-    start_profiler();
+    
     process_status_t process_status;
     key_flag_t key_flag = {false, false, false, false, false, false};
     // 初期状態は n1 ,operator は未定義にせず、0, '+' をダミーとして保持する
@@ -99,11 +99,12 @@ int main(){
     while(1){
         char key = get_valid_key();
         if(key == 'e' || key == 'E') break;
+        start_profiler();
         update_flag(key, &key_flag);
         update_process_status(key, &key_flag, &process_status);
         update_display(&process_status);
+        end_profiler();
     }
-    end_profiler();
 }
 // 入力が有効なキーであるかをチェックする関数
 char get_valid_key(void){
