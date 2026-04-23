@@ -88,7 +88,7 @@ static inline void clear_process(process_status_t* process_status){
     memory_clear();
 }
 // global variable
-static memory_t memory = {{0,0}, Q_ZERO}; 
+static memory_t memory = {{0,0}, M_ZERO}; 
 int main(){
     start_profiler();
     process_status_t process_status;
@@ -98,7 +98,7 @@ int main(){
     print_setup();
     while(1){
         char key = get_valid_key();
-        if(key == EOF) break;
+        if(key == 'e' || key == 'E') break;
         update_flag(key, &key_flag);
         update_process_status(key, &key_flag, &process_status);
         update_display(&process_status);
@@ -115,6 +115,8 @@ char get_valid_key(void){
         }else if(key == 'P' || key == 'N' || key == 'R' || key == 'D'){
             return key;
         }else if(key == 'p' || key == 'n' || key == 'r' || key == 'd'){
+            return key;
+        }else if(key == 'E' || key == 'e'){
             return key;
         }
     } 
@@ -264,7 +266,9 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
     if(key_flag->is_n || key_flag -> is_zero){
         process_status->n2.value = process_status->n2.value * 10 + (key - '0');
         if(process_status->n2.value > MAX_VALUE){
+            process_status->n2 = (num_t){0,0}; //入力あふれ時は入力をリセットしてエラー表示
             process_status->current_state = Q_ER;
+            return;
         }
     }
     if(key_flag->is_period){
@@ -287,7 +291,7 @@ void process_n(char key, key_flag_t *key_flag, process_status_t* process_status)
         clear_process(process_status);
     }
     if(key_flag->is_backspace){
-        if(process_status->n2.value < 9){
+        if(process_status->n2.value < 10){
             process_status->current_state = Q_OP;
             process_status->n2 = (num_t){0,0};
         }else{        
@@ -322,12 +326,16 @@ void process_zero(char key, key_flag_t *key_flag, process_status_t* process_stat
     }
     if(key_flag->is_op){
         calc_result(process_status); // n1にn1 op n2を格納
-        process_status->operator = key;
-        process_status->current_state = Q_OP;
+        if(process_status->current_state != Q_ER){
+            process_status->operator = key;
+            process_status->current_state = Q_OP;
+        }
     }
     if(key_flag->is_equal){
         calc_result(process_status);
-        process_status->current_state = Q_RE;
+        if(process_status->current_state != Q_ER){
+            process_status->current_state = Q_RE;
+        }
     }
     if(key_flag->is_n){
         process_status->n2.value = key - '0';
@@ -374,23 +382,31 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
     if(key_flag->is_zero || key_flag->is_n){
         process_status->n2.value = process_status->n2.value * 10 + (key - '0');
         if(process_status->n2.value > MAX_VALUE){
+            process_status->n2 = (num_t){0,0}; //入力あふれ時は入力をリセットしてエラー表示
             process_status->current_state = Q_ER;
+            return;
         }
         process_status->n2.dp++;
         if(process_status->n2.dp > MAX_7SEG_SIZE - 1){
+            process_status->n2 = (num_t){0,0};
             process_status->current_state = Q_ER;
+            return;
         }else{
             process_status->current_state = Q_DEC;
         }
     }
     if(key_flag->is_op){
         calc_result(process_status); // n1にn1 op n2を格納
-        process_status->operator = key;
-        process_status->current_state = Q_OP;
+        if(process_status->current_state != Q_ER){
+            process_status->operator = key;
+            process_status->current_state = Q_OP;
+        }
     }
     if(key_flag->is_equal){
         calc_result(process_status);
-        process_status->current_state = Q_RE;
+        if(process_status->current_state != Q_ER){
+            process_status->current_state = Q_RE;
+        }
     }
     if(key_flag->is_clear){
         clear_process(process_status);
@@ -425,7 +441,7 @@ void process_dec(char key, key_flag_t *key_flag, process_status_t* process_statu
     return;
 }
 void process_op(char key, key_flag_t *key_flag, process_status_t* process_status){
-    if(key_flag->is_period || key_flag->is_equal || key_flag->is_op || key_flag->is_memory_add || key_flag->is_memory_sub){
+    if(key_flag->is_period || key_flag->is_equal || key_flag->is_op){
         process_status->current_state = Q_ER;
     }
     if(key_flag->is_n){
@@ -442,9 +458,17 @@ void process_op(char key, key_flag_t *key_flag, process_status_t* process_status
     if(key_flag->is_backspace){
         num_t temp = process_status->n1;
         state_t temp_state = process_status->prev_state;
+        state_t next_state;
+        if(temp.dp > 0 || (temp.dp == 0 && temp_state == Q_DEC)){ // temp.dp == 0でも、直前がQ_DECなら12.のような状態を復元する
+            next_state = Q_DEC;
+        }else if(temp.value == 0){
+            next_state = Q_ZERO;
+        }else{
+            next_state = Q_N;
+        }
         // 演算子を削除して入力状態へ戻す
         // operator は未定義にせず、初期状態と同様に '+' をダミーとして保持する
-        *process_status = (process_status_t){temp_state, Q_OP, {0,0}, temp, '+'}; 
+        *process_status = (process_status_t){next_state, Q_OP, {0,0}, temp, '+'};
     }
     // メモリに加減算する際はn1を使う
     if(key_flag->is_memory_add){
@@ -549,6 +573,8 @@ void print_setup(){
         "  - メモリに加算/減算する際は、現在の入力値や計算結果がメモリに加算/減算されます。\n"
         "  - メモリリコールすると、メモリの値が現在の入力値としてセットされます。\n"
         "  - メモリがオーバーフローした場合は、強制的にメモリがクリアされます。\n"
+        "  - クリアはすべての状態を初期状態に戻し、メモリもクリアします。\n"
+        "  - 入力があふれた場合はエラーになり、計算結果があふれた場合は、オーバーフローになります。\n"
         "入力例: 10+12-1.23*60/80=\n";
     for(int i = 0; setup_msg[i] != '\0'; i++){
         _io_putch(setup_msg[i]);
