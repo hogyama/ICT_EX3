@@ -85,6 +85,7 @@ static int conv_to_7seg(int num);
 // inline
 static inline void clear_process(process_status_t* process_status){
     *process_status = (process_status_t){Q_OP, Q_OP, {0, 0}, {0, 0}, '+'};
+    memory_clear();
 }
 // global variable
 static memory_t memory = {{0,0}, Q_ZERO}; 
