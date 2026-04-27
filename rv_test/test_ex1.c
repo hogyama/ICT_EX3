@@ -1,59 +1,73 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include "io.h"
+#define MAX_INPUT 100
+int read_decimal(char buf[], int max_size);
+int conv_string_to_int_decimal(char buf[]);
 
-#define MAX_INPUT_SIZE 100
-
-int main(){
+int main(void)
+{
+    int finished = 0;
 #if !defined(NATIVE_MODE)
-    start_profiler();
     gpio->data = 0;
 #endif
-    int terminated = 0;
-    while(!terminated)
-    {
-        int i = 0;
-        char c[MAX_INPUT_SIZE];
-        int answer = 0;
-        while(1) {
-#if !defined(NATIVE_MODE)
-            char ch = io_getch();
-#else
-            char ch = getchar();
-#endif                
-            if(i >= MAX_INPUT_SIZE - 1){
-                break;
-            }
-            if(ch == 'f'){
-                terminated = 1;
-                break;
-            }
-            if(ch == '\n'){
-                break;
-            }
-            if(ch == '\r'){
-                continue;
-            }
-            if(ch >= '0' && ch <= '9'){
-                c[i++] = ch;
-            }
+    while(!finished) {
+        char input[MAX_INPUT];
+        int len = read_decimal(input, MAX_INPUT);
+        if (len < 0) {
+            finished = 1;
+            continue;
         }
-        c[i] = '\0';
-        if(i > 0) {
-            for(int j = 0; j < i; j++){
-                if(c[j] >= '0' && c[j] <= '9'){
-                    answer = answer * 10 + (c[j] - '0');
-                }
-            }
+        if (len == 0) {
+            continue;
+        }
 #if !defined(NATIVE_MODE)
-            gpio->data = answer;
+        start_profiler();
 #endif
-            printf("answer = %d (0x%x)\n", answer, answer);
+        int answer = conv_string_to_int_decimal(input);
+#if !defined(NATIVE_MODE)
+        gpio->data = answer;
+        end_profiler();
+#endif
+        printf("input = %s, answer = %d, hex = %x\n", input, answer, answer);
+    }
+    return 0;
+}
+
+int read_decimal(char buf[], int max_size)
+{
+    int i = 0;
+    while (1) {
+#if !defined(NATIVE_MODE)
+        char ch = _io_getch();
+#else
+        char ch = getchar();
+#endif
+        if (ch == 'f') {
+            return -1;
+        }
+        if (ch == '\n') {
+            break;
+        }
+        if (ch == '\r') {
+            continue;
+        }
+        if (i >= max_size - 1) {
+            break;
+        }
+        if (ch >= '0' && ch <= '9') {
+            buf[i++] = ch;
         }
     }
-#if !defined(NATIVE_MODE)
-    end_profiler();
-#endif
+    buf[i] = '\0';
+    return i;
+}
 
-    return 0;
+int conv_string_to_int_decimal(char buf[])
+{
+    int value = 0;
+    for (int i = 0; buf[i] != '\0'; i++) {
+        int digit = buf[i] - '0';
+        value = (value << 3) + (value << 1) + digit;
+    }
+    return value;
 }
