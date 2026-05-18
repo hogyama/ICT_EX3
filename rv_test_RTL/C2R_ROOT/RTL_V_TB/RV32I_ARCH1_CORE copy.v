@@ -315,7 +315,6 @@ input [31:0] x, y;
 input [7:0] MD_type;
 output [31:0] out;
 output pending;
-
     reg stt;
     reg [31:0] a, b, c;
 
@@ -339,8 +338,39 @@ output pending;
         b <= b1;
         c <= c1;
     end
+    else if (MD_type[`DIV]) begin
+        
+    end
     assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0)));
     assign out = (stt) ? c1 : 32'b0;
+    module DIVU_REMU(
+        x,
+        y,
+        quotient,
+        remainder
+        clk,
+        rst_n,
+    ); 
+        input [31:0] x; //被除数
+        input [31:0] y; //除数
+        output [31:0] quotient; //商
+        output [31:0] remainder; //あまり
+        
+        reg stt; //スタートフラグ
+        reg [32:0] a //計算経過
+        reg [31:0] divisor //保持する除数
+        wire flag;
+        flag = (~stt) ? 0 : a[32];
+        always @(posedge clk or negedge rst_n) begin
+            if(rst_n == 0) begin
+                //reg reset
+                stt <= 1'b0;
+                a <= 33'b0;
+                divisor <= 32'b0;
+            end
+            else if (~stt)
+        end
+    endmodule
 endmodule
 
 

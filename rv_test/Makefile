@@ -1,4 +1,4 @@
-SRC = test_ex1
+SRC = mul
 #SRC = t4b
 SRC_C = $(SRC).c
 
@@ -8,7 +8,9 @@ LD=$(DIR_CC)/riscv32-unknown-elf-ld
 DUMP=$(DIR_CC)/riscv32-unknown-elf-objdump
 CFLAGS=-O1
 
-CFLAGS_RV=-march=rv32iazicsr
+#CFLAGS_RV=-march=rv32iazicsr
+#M拡張
+CFLAGS_RV=-march=rv32im_zicsr -mabi=ilp32
 #CFLAGS_RV+= -DTEST_WFI_BREAK
 OUT= temp
 
