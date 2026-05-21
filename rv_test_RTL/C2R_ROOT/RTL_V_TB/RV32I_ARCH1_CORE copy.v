@@ -343,28 +343,45 @@ output pending;
     end
     assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0)));
     assign out = (stt) ? c1 : 32'b0;
-    module DIVU_REMU(
+    module REMU(
         input [31:0] x,
         input [31:0] y,
-        output [31:0] quotient,
-        output [31:0] remainder
+        output wire [31:0] remainder,
         input clk,
-        input rst_n
-    ); 
-        reg [32:0] x1;
-        wire [32:0] wire_x;
-        assign wire_x = x1;
-        wire [32:0] wire_quotient;
-        always @(posedge clk or negedge rst_n) begin
-            if(rst_n == 1'b0) begin
-                x1 <= 0;
-            end
-            else if(wire_x[32] == 0)begin
-                quotient <= wire_qotient + 1;
-            end
-            x1 <= wire_x - y;
-            quotient <= quotient >> 1;
+        input rst_n,
+        input start,
+        output wire complete
+    );
+    reg stt; //スタートフラグ 
+    wire [32:0] x_expand;
+    wire [32:0] y_expand;
+    wire [32:0] sub_result;
+    wire sub_ok;
+    reg [32:0] remainder_expand;
+
+    assign x_expand = (~stt) ? {1'b0, x} : remainder_expand;
+    assign y_expand = {1'b0, y};
+    
+    assign sub_result = x_expand - y_expand;
+    assign sub_ok = ~sub_result[32] && stt;
+    
+    assign remainder = remainder_expand[31:0];
+    
+    assign complete = stt && ~sub_ok;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if(rst_n == 1'b0) begin
+            stt <= 1'b0;
+            remainder_expand <= 33'b0;
         end
+        else if(~stt && start) begin
+            stt <= 1'b1;
+        end
+        else if(stt && complete) begin 
+            stt <= 1'b0;
+        end
+            remainder_expand <= sub_result;
+    end
     endmodule
 endmodule
 
