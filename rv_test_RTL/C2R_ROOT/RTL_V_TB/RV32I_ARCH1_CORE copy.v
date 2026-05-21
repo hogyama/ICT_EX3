@@ -344,31 +344,26 @@ output pending;
     assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0)));
     assign out = (stt) ? c1 : 32'b0;
     module DIVU_REMU(
-        x,
-        y,
-        quotient,
-        remainder
-        clk,
-        rst_n,
+        input [31:0] x,
+        input [31:0] y,
+        output [31:0] quotient,
+        output [31:0] remainder
+        input clk,
+        input rst_n
     ); 
-        input [31:0] x; //被除数
-        input [31:0] y; //除数
-        output [31:0] quotient; //商
-        output [31:0] remainder; //あまり
-        
-        reg stt; //スタートフラグ
-        reg [32:0] a //計算経過
-        reg [31:0] divisor //保持する除数
-        wire flag;
-        flag = (~stt) ? 0 : a[32];
+        reg [32:0] x1;
+        wire [32:0] wire_x;
+        assign wire_x = x1;
+        wire [32:0] wire_quotient;
         always @(posedge clk or negedge rst_n) begin
-            if(rst_n == 0) begin
-                //reg reset
-                stt <= 1'b0;
-                a <= 33'b0;
-                divisor <= 32'b0;
+            if(rst_n == 1'b0) begin
+                x1 <= 0;
             end
-            else if (~stt)
+            else if(wire_x[32] == 0)begin
+                quotient <= wire_qotient + 1;
+            end
+            x1 <= wire_x - y;
+            quotient <= quotient >> 1;
         end
     endmodule
 endmodule
