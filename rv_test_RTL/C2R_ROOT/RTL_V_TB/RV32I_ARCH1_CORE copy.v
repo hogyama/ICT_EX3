@@ -315,13 +315,13 @@ input [31:0] x, y;
 input [7:0] MD_type;
 output [31:0] out;
 output pending;
+    //乗算器
     reg stt;
     reg [31:0] a, b, c;
-
+    wire rem_pending;
     wire [31:0] a1 = (~stt) ? x : a << 1;
     wire [31:0] b1 = (~stt) ? y : b >> 1;
     wire [31:0] c1 = (~stt) ? 32'b0 : (b & 1) ? c + a : c;
-
     always @ (posedge clk or negedge rst_n)
     if (rst_n == 1'b0) begin
         stt <= 1'b0;
@@ -338,51 +338,127 @@ output pending;
         b <= b1;
         c <= c1;
     end
-    else if (MD_type[`DIV]) begin
-        
+
+    //剰余算器
+    wire [31:0] rem_out;
+    wire [31:0] remu_out;
+    wire rem_busy;
+    wire remu_busy;
+
+    wire start_rem  = MD_type[`REM];
+    wire start_remu = MD_type[`REMU];
+
+    else if (MD_type[`REM]) begin
+        if(~stt)
+            stt <= 1'b1;
+        else if (~rem_pending)
+            stt <= 1'b0;
+        REM rem(
+            .x(x),
+            .y(y),
+            .remainder(c1),
+            .clk(clk),
+            .rst_n(rst_n),
+            .start(stt),
+            .busy(rem_pending)
+        );
     end
-    assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0)));
+    else if (MD_type[`REMU]) begin
+        if(~stt)
+            stt <= 1'b1;
+        else if (~rem_pending)
+            stt <= 1'b0;
+        REMU remu(
+            .x(x),
+            .y(y),
+            .remainder(c1),
+            .clk(clk),
+            .rst_n(rst_n),
+            .start(stt),
+            .busy(rem_pending)
+        );
+    end
+    assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0))) | (MD_type[`REM] & rem_pending) | (MD_type[`REMU] & rem_pending);
     assign out = (stt) ? c1 : 32'b0;
-    module REMU(
+
+module REMU(
         input [31:0] x,
         input [31:0] y,
-        output wire [31:0] remainder,
+        output wire [31:0] remainder, 
         input clk,
         input rst_n,
         input start,
-        output wire complete
-    );
-    reg stt; //スタートフラグ 
-    wire [32:0] x_expand;
-    wire [32:0] y_expand;
-    wire [32:0] sub_result;
-    wire sub_ok;
-    reg [32:0] remainder_expand;
-
-    assign x_expand = (~stt) ? {1'b0, x} : remainder_expand;
-    assign y_expand = {1'b0, y};
-    
-    assign sub_result = x_expand - y_expand;
-    assign sub_ok = ~sub_result[32] && stt;
-    
-    assign remainder = remainder_expand[31:0];
-    
-    assign complete = stt && ~sub_ok;
-    
+        output wire busy,
+);
+    reg[63:0] register; // 63:32 -> remainder, 31:0 -> quotient
+    reg[31:0] y_reg;
+    reg[31:0] counter;
+    reg start_reg;
+    wire[32:0] sub_result = {1'b0, register[62:31]} - {1'b0, y_reg};
     always @(posedge clk or negedge rst_n) begin
-        if(rst_n == 1'b0) begin
-            stt <= 1'b0;
-            remainder_expand <= 33'b0;
+        if (!rst_n) begin
+            register <= 64'b0;
+            counter <= 32'b0;
+            start_reg <= 1'b0;
+        end else if (start && !start_reg) begin
+            start_reg <= 1'b1;
+            register <= {32'b0, x};
+            y_reg <= y;
+            counter <= 32'h80000000; // 2^31
+        end else if (start_reg) begin
+            if (y_reg == 32'b0) begin
+                register <= {x, 32'hFFFFFFFF};
+                start_reg <= 1'b0;
+            end else if (counter != 0) begin
+                if (sub_result[32] == 0) begin
+                    register <= {sub_result[31:0], register[30:0], 1'b1}; // Update remainder and quotient
+                end else begin
+                    register <= {register[62:0], 1'b0}; // Shift quotient left
+                end
+                counter <= counter >> 1;
+            end else begin
+                start_reg <= 1'b0; 
+            end
         end
-        else if(~stt && start) begin
-            stt <= 1'b1;
-        end
-        else if(stt && complete) begin 
-            stt <= 1'b0;
-        end
-            remainder_expand <= sub_result;
     end
-    endmodule
+    assign remainder = register[63:32];
+    assign busy = start_reg;
+endmodule
+
+module REM(
+    input  [31:0] x,
+    input  [31:0] y,
+    output wire [31:0] remainder,
+    input  clk,
+    input  rst_n,
+    input  start,
+    output wire busy
+);
+    wire x_is_neg = x[31];
+    wire y_is_neg = y[31];
+    wire [31:0] abs_x = x_is_neg ? (~x + 1) : x;
+    wire [31:0] abs_y = y_is_neg ? (~y + 1) : y;
+    reg saved_x_sign;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            saved_x_sign <= 1'b0;
+        end else if (start) begin
+            saved_x_sign <= x_is_neg;
+        end
+    end
+    wire [31:0] core_remainder;
+    REMU u_remu(
+        .x(abs_x),
+        .y(abs_y),
+        .remainder(core_remainder),
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(start),
+        .busy(busy) 
+    );
+    assign remainder = saved_x_sign ? (~core_remainder + 1) : core_remainder;
+endmodule
+
 endmodule
 
 
