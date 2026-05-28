@@ -36,6 +36,9 @@ module RV32I_ARCH1_CORE   (
     wire rs1_sel, stall, SC_EN, SC_CLR, I_LD_BR, PC_LD;
     wire [1:0] MEM_op;
     wire [31:0] rs1, rs2, rd, ALU_out, MD_out, CSR_out, mtvec, LD_dout, MEM_out, bus0, bus1, bus2, bus3;
+    wire BR_taken;
+    wire [31:0] BR_target;
+    wire [31:0] PC_next;
 
     /********************* wire continuous assignments ***************************/
     assign CSRRXI = SYS_type[`CSRRWI] | SYS_type[`CSRRSI] | SYS_type[`CSRRCI];
@@ -48,8 +51,11 @@ module RV32I_ARCH1_CORE   (
     assign bus1 = (T[2] & rs1_sel) ? rs1 : (T[0]) ? PC : TR;
     assign bus2 = (T[2] & (I[`COMP] | I[`BR])) ? rs2 : imm;
     assign bus3 = (TRAP_occurred) ? mtvec : (MEM_out | ALU_out | MD_out | CSR_out);
+    assign BR_taken  = T[2] & I[`BR] & bus3[0];
+    assign BR_target = TR + imm;
+    assign PC_next   = BR_taken ? BR_target : bus3;
 
-    assign I_LD_BR = I[`LD] | I[`BR];
+    assign I_LD_BR = I[`LD];
     assign stall = MD_pending | IO_pending;
     assign SC_EN = (~stall) & (~SYS_type[`WFI] | INTR_detected);
     assign INST_completed = ((T[2] & ~I_LD_BR) | (T[3] & I_LD_BR)) & SC_EN;
@@ -58,7 +64,10 @@ module RV32I_ARCH1_CORE   (
     assign MEM_out = (T[1] | (T[3] & I[`LD])) ? LD_dout : 32'b0;
     assign MEM_addr = (T[0]) ? bus1 : bus3;
     
-    assign PC_LD = T[0] | (T[2] & (I[`JAL] | I[`JALR])) | (T[3] & I[`BR] & FLG) | SYS_type[`MRET];
+    assign PC_LD = T[0] | 
+                    (T[2] & (I[`JAL] | I[`JALR])) | 
+                    BR_taken | 
+                    SYS_type[`MRET];
     assign RF_rd = ((T[2] & ~I[`LD]) | (T[3] & I[`LD])) ? I_rd : 5'b0;
     assign rd = (T[2] & (I[`JAL] | I[`JALR])) ? bus0 : bus3;
 
@@ -88,7 +97,7 @@ module RV32I_ARCH1_CORE   (
             if (RF_rd != 5'b0)
                 XREG[RF_rd] <= rd;
             if (PC_LD)
-                PC <= { bus3[31:1], 1'b0 };
+                PC <= { PC_next[31:1], 1'b0 };
             if (T[0])
                 TR <= bus1;
             if (T[1])
@@ -318,68 +327,57 @@ output pending;
     //乗算器
     reg stt;
     reg [31:0] a, b, c;
-    wire rem_pending;
     wire [31:0] a1 = (~stt) ? x : a << 1;
     wire [31:0] b1 = (~stt) ? y : b >> 1;
     wire [31:0] c1 = (~stt) ? 32'b0 : (b & 1) ? c + a : c;
     always @ (posedge clk or negedge rst_n)
-    if (rst_n == 1'b0) begin
-        stt <= 1'b0;
-        a <= 32'b0;
-        b <= 32'b0;
-        c <= 32'b0;
-    end
-    else if (MD_type[`MUL]) begin /// currently, only MUL instruction is implemented
-        if (~stt)
-            stt <= 1'b1;
-        else if (b1 == 32'b0)
+        if (rst_n == 1'b0) begin
             stt <= 1'b0;
-        a <= a1;
-        b <= b1;
-        c <= c1;
-    end
+            a <= 32'b0;
+            b <= 32'b0;
+            c <= 32'b0;
+        end
+        else if (MD_type[`MUL]) begin /// currently, only MUL instruction is implemented
+            if (~stt)
+                stt <= 1'b1;
+            else if (b1 == 32'b0)
+                stt <= 1'b0;
+            a <= a1;
+            b <= b1;
+            c <= c1;
+        end
+    wire mul_pending  = MD_type[`MUL]  & ((~stt) | (stt & (b1 != 32'b0)));
 
     //剰余算器
     wire [31:0] rem_out;
     wire [31:0] remu_out;
-    wire rem_busy;
-    wire remu_busy;
+    wire rem_pending, remu_pending;
 
-    wire start_rem  = MD_type[`REM];
-    wire start_remu = MD_type[`REMU];
+    REM rem(
+        .x(x),
+        .y(y),
+        .remainder(rem_out),
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(MD_type[`REM]),
+        .pending(rem_pending)
+    );
+    REMU remu(
+        .x(x),
+        .y(y),
+        .remainder(remu_out),
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(MD_type[`REMU]),
+        .pending(remu_pending)
+    );
+    assign pending = mul_pending | rem_pending | remu_pending;
 
-    else if (MD_type[`REM]) begin
-        if(~stt)
-            stt <= 1'b1;
-        else if (~rem_pending)
-            stt <= 1'b0;
-        REM rem(
-            .x(x),
-            .y(y),
-            .remainder(c1),
-            .clk(clk),
-            .rst_n(rst_n),
-            .start(stt),
-            .busy(rem_pending)
-        );
-    end
-    else if (MD_type[`REMU]) begin
-        if(~stt)
-            stt <= 1'b1;
-        else if (~rem_pending)
-            stt <= 1'b0;
-        REMU remu(
-            .x(x),
-            .y(y),
-            .remainder(c1),
-            .clk(clk),
-            .rst_n(rst_n),
-            .start(stt),
-            .busy(rem_pending)
-        );
-    end
-    assign pending = MD_type[`MUL] & ((~stt) | (stt & (b1 != 32'b0))) | (MD_type[`REM] & rem_pending) | (MD_type[`REMU] & rem_pending);
-    assign out = (stt) ? c1 : 32'b0;
+    assign out = MD_type[`MUL]  ? c1 :
+                MD_type[`REM]  ? rem_out :
+                MD_type[`REMU] ? remu_out :
+                32'b0;
+endmodule
 
 module REMU(
         input [31:0] x,
@@ -388,41 +386,50 @@ module REMU(
         input clk,
         input rst_n,
         input start,
-        output wire busy,
+        output wire pending
 );
     reg[63:0] register; // 63:32 -> remainder, 31:0 -> quotient
     reg[31:0] y_reg;
-    reg[31:0] counter;
-    reg start_reg;
-    wire[32:0] sub_result = {1'b0, register[62:31]} - {1'b0, y_reg};
+    reg[5:0] counter;
+    reg running; // 剰余算が進行中であることを示すフラグ 
+    wire[32:0] sub_result = {1'b0, register[62:31]} - {1'b0, y_reg}; 
+    wire done = running & (counter == 6'd0); // 剰余算が完了したことを示す信号
     always @(posedge clk or negedge rst_n) begin
+        //reset
         if (!rst_n) begin
             register <= 64'b0;
-            counter <= 32'b0;
-            start_reg <= 1'b0;
-        end else if (start && !start_reg) begin
-            start_reg <= 1'b1;
-            register <= {32'b0, x};
+            counter <= 6'b0;
+            y_reg <= 32'b0;
+            running <= 1'b0;
+        end 
+        //start
+        else if (start && !running) begin
+            running <= 1'b1;
             y_reg <= y;
-            counter <= 32'h80000000; // 2^31
-        end else if (start_reg) begin
-            if (y_reg == 32'b0) begin
-                register <= {x, 32'hFFFFFFFF};
-                start_reg <= 1'b0;
-            end else if (counter != 0) begin
-                if (sub_result[32] == 0) begin
+            if(y == 32'b0) begin
+                register <= {x, 32'hFFFFFFFF}; // 0除算の時riscvの仕様に従い、商を0xFFFFFFFF、余りを被除数とする
+                counter <= 6'b0;
+            end else begin
+                register <= {32'b0, x};
+                counter <= 6'd32; // 32回のシフトと減算で商と余りを求める
+            end
+        end
+        //running
+        else if (running) begin
+            if(counter == 0) begin
+                running <= 1'b0; // 完了
+            end else begin
+                if (sub_result[32] == 1'b0) begin
                     register <= {sub_result[31:0], register[30:0], 1'b1}; // Update remainder and quotient
                 end else begin
                     register <= {register[62:0], 1'b0}; // Shift quotient left
                 end
-                counter <= counter >> 1;
-            end else begin
-                start_reg <= 1'b0; 
+                counter <= counter - 1;
             end
         end
     end
     assign remainder = register[63:32];
-    assign busy = start_reg;
+    assign pending = start & ((running & ~done) | (~running)); // startがhighになった後、剰余算が完了するまでを示す信号
 endmodule
 
 module REM(
@@ -432,13 +439,13 @@ module REM(
     input  clk,
     input  rst_n,
     input  start,
-    output wire busy
+    output wire pending
 );
     wire x_is_neg = x[31];
     wire y_is_neg = y[31];
-    wire [31:0] abs_x = x_is_neg ? (~x + 1) : x;
-    wire [31:0] abs_y = y_is_neg ? (~y + 1) : y;
-    reg saved_x_sign;
+    wire [31:0] abs_x = x_is_neg ? (~x + 32'd1) : x; // xの絶対値
+    wire [31:0] abs_y = y_is_neg ? (~y + 32'd1) : y; // yの絶対値
+    reg saved_x_sign; // xの符号を保存するレジスタ
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             saved_x_sign <= 1'b0;
@@ -454,13 +461,10 @@ module REM(
         .clk(clk),
         .rst_n(rst_n),
         .start(start),
-        .busy(busy) 
+        .pending(pending)
     );
-    assign remainder = saved_x_sign ? (~core_remainder + 1) : core_remainder;
+    assign remainder = saved_x_sign ? (~core_remainder + 32'd1) : core_remainder; // xの符号に応じて余りの符号を調整
 endmodule
-
-endmodule
-
 
 module INST_TIMER (clk, rst_n, en, clr, T);
 input clk, rst_n;
