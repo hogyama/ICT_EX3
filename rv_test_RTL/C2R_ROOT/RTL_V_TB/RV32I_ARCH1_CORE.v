@@ -343,7 +343,6 @@ output pending;
     assign out = (stt) ? c1 : 32'b0;
 endmodule
 
-
 module INST_TIMER (clk, rst_n, en, clr, T);
 input clk, rst_n;
 input en, clr;
